@@ -32,6 +32,7 @@ type UserLoginMetadata struct {
 	PhoneLastSeen   jsontime.Unix `json:"phone_last_seen"`
 	PhoneLastPinged jsontime.Unix `json:"phone_last_pinged"`
 	Timezone        string        `json:"timezone"`
+	Proxy           string        `json:"proxy,omitempty"`
 	PushKeys        *PushKeys     `json:"push_keys,omitempty"`
 	APNSEncPubKey   []byte        `json:"apns_enc_pubkey,omitempty"`
 	APNSEncPrivKey  []byte        `json:"apns_enc_privkey,omitempty"`

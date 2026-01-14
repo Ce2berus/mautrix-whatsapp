@@ -49,21 +49,43 @@ func (wa *WhatsAppConnector) getProxy(reason string) (string, error) {
 }
 
 func (wa *WhatsAppConnector) updateProxy(ctx context.Context, client *whatsmeow.Client, isLogin bool) error {
-	if wa.Config.ProxyOnlyLogin && !isLogin {
+	return wa.updateProxyWithUserProxy(ctx, client, isLogin, "")
+}
+
+func (wa *WhatsAppConnector) updateProxyWithUserProxy(ctx context.Context, client *whatsmeow.Client, isLogin bool, userProxy string) error {
+	if wa.Config.ProxyOnlyLogin && !isLogin && userProxy == "" {
 		return nil
 	}
 	reason := "connect"
 	if isLogin {
 		reason = "login"
 	}
-	if proxy, err := wa.getProxy(reason); err != nil {
-		return fmt.Errorf("failed to get proxy address: %w", err)
-	} else if err = client.SetProxyAddress(proxy, whatsmeow.SetProxyOptions{
-		OnlyLogin: wa.Config.ProxyOnlyLogin,
-		NoMedia:   wa.Config.ProxyOnlyLogin,
+
+	var proxy string
+	var err error
+
+	// User-specific proxy takes precedence over global proxy
+	if userProxy != "" {
+		proxy = userProxy
+		zerolog.Ctx(ctx).Debug().Str("proxy", proxy).Msg("Using user-specific proxy")
+	} else {
+		proxy, err = wa.getProxy(reason)
+		if err != nil {
+			return fmt.Errorf("failed to get proxy address: %w", err)
+		}
+	}
+
+	if proxy == "" {
+		zerolog.Ctx(ctx).Debug().Msg("No proxy configured")
+		return nil
+	}
+
+	if err = client.SetProxyAddress(proxy, whatsmeow.SetProxyOptions{
+		OnlyLogin: wa.Config.ProxyOnlyLogin && userProxy == "",
+		NoMedia:   wa.Config.ProxyOnlyLogin && userProxy == "",
 	}); err != nil {
 		return fmt.Errorf("failed to set proxy address: %w", err)
 	}
-	zerolog.Ctx(ctx).Debug().Msg("Enabled proxy")
+	zerolog.Ctx(ctx).Debug().Str("proxy", proxy).Msg("Enabled proxy")
 	return nil
 }

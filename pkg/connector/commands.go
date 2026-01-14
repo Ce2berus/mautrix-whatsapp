@@ -307,3 +307,70 @@ func fnJoin(ce *commands.Event) {
 		ce.Reply("That doesn't look like a WhatsApp invite link")
 	}
 }
+
+var cmdProxy = &commands.FullHandler{
+	Func: fnProxy,
+	Name: "proxy",
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionAdmin,
+		Description: "View or change the proxy used for your WhatsApp connection.",
+		Args:        "[set <proxy_url> | clear]",
+	},
+	RequiresLogin: true,
+}
+
+func fnProxy(ce *commands.Event) {
+	login := ce.User.GetDefaultLogin()
+	if login == nil {
+		ce.Reply("Login not found")
+		return
+	}
+
+	meta := login.Metadata.(*waid.UserLoginMetadata)
+
+	if len(ce.Args) == 0 {
+		// Show current proxy
+		if meta.Proxy == "" {
+			ce.Reply("No user-specific proxy configured. The global proxy setting will be used if configured.")
+		} else {
+			ce.Reply("Current proxy: `%s`", meta.Proxy)
+		}
+		return
+	}
+
+	wa := login.Client.(*WhatsAppClient)
+
+	switch strings.ToLower(ce.Args[0]) {
+	case "set":
+		if len(ce.Args) < 2 {
+			ce.Reply("Usage: `$cmdprefix proxy set <proxy_url>`\n\nExample: `$cmdprefix proxy set socks5://127.0.0.1:1080`")
+			return
+		}
+		proxyURL := ce.Args[1]
+		meta.Proxy = proxyURL
+		err := login.Save(ce.Ctx)
+		if err != nil {
+			ce.Reply("Failed to save proxy setting: %v", err)
+			return
+		}
+		ce.Reply("Proxy set to `%s`. Reconnecting...", proxyURL)
+
+		// Reconnect with new proxy
+		wa.Disconnect()
+		wa.Connect(ce.Ctx)
+	case "clear", "remove", "delete":
+		meta.Proxy = ""
+		err := login.Save(ce.Ctx)
+		if err != nil {
+			ce.Reply("Failed to clear proxy setting: %v", err)
+			return
+		}
+		ce.Reply("Proxy cleared. Reconnecting with global proxy (if configured)...")
+
+		// Reconnect without user proxy
+		wa.Disconnect()
+		wa.Connect(ce.Ctx)
+	default:
+		ce.Reply("Usage: `$cmdprefix proxy [set <proxy_url> | clear]`\n\nExamples:\n- `$cmdprefix proxy` - Show current proxy\n- `$cmdprefix proxy set socks5://127.0.0.1:1080` - Set proxy\n- `$cmdprefix proxy clear` - Remove proxy")
+	}
+}

@@ -22,6 +22,7 @@ import (
 )
 
 const (
+	LoginStepIDProxy       = "fi.mau.whatsapp.login.proxy"
 	LoginStepIDQR          = "fi.mau.whatsapp.login.qr"
 	LoginStepIDPhoneNumber = "fi.mau.whatsapp.login.phone"
 	LoginStepIDCode        = "fi.mau.whatsapp.login.code"
@@ -104,6 +105,7 @@ type WALogin struct {
 	Log       zerolog.Logger
 	PhoneCode bool
 	Timezone  string
+	Proxy     string
 
 	QRs           []string
 	StartTime     time.Time
@@ -127,13 +129,29 @@ var (
 const LoginConnectWait = 15 * time.Second
 
 func (wl *WALogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
+	return &bridgev2.LoginStep{
+		Type:         bridgev2.LoginStepTypeUserInput,
+		StepID:       LoginStepIDProxy,
+		Instructions: "Optionally configure a proxy for this WhatsApp connection",
+		UserInputParams: &bridgev2.LoginUserInputParams{
+			Fields: []bridgev2.LoginInputDataField{{
+				Type:        bridgev2.LoginInputFieldTypeString,
+				ID:          "proxy",
+				Name:        "Proxy URL (optional)",
+				Description: "SOCKS5 or HTTP proxy URL (e.g., socks5://127.0.0.1:1080 or http://user:pass@proxy:8080). Leave empty to use global proxy or no proxy.",
+			}},
+		},
+	}, nil
+}
+
+func (wl *WALogin) continueLogin(ctx context.Context) (*bridgev2.LoginStep, error) {
 	wl.Main.firstClientConnectOnce.Do(wl.Main.onFirstClientConnect)
 	device := wl.Main.DeviceStore.NewDevice()
 	wl.Client = whatsmeow.NewClient(device, waLog.Zerolog(wl.Log))
 	wl.Client.EnableAutoReconnect = false
 	wl.Client.DisableLoginAutoReconnect = true
 	wl.EventHandlerID = wl.Client.AddEventHandler(wl.handleEvent)
-	if err := wl.Main.updateProxy(ctx, wl.Client, true); err != nil {
+	if err := wl.Main.updateProxyWithUserProxy(ctx, wl.Client, true, wl.Proxy); err != nil {
 		return nil, err
 	}
 
@@ -169,7 +187,25 @@ func (wl *WALogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
 
 func (wl *WALogin) StartWithOverride(ctx context.Context, old *bridgev2.UserLogin) (*bridgev2.LoginStep, error) {
 	step, err := wl.Start(ctx)
-	if err == nil && step != nil && old != nil && step.StepID == LoginStepIDPhoneNumber {
+	if err != nil || step == nil || old == nil {
+		return step, err
+	}
+
+	// If we're at the proxy step and have an old login, use its proxy setting
+	if step.StepID == LoginStepIDProxy {
+		oldMeta := old.Metadata.(*waid.UserLoginMetadata)
+		wl.Proxy = oldMeta.Proxy
+		wl.Log.Debug().
+			Str("proxy", wl.Proxy).
+			Msg("Auto-using proxy from previous login for relogin")
+		step, err = wl.continueLogin(ctx)
+		if err != nil || step == nil {
+			return step, err
+		}
+	}
+
+	// If we're at the phone number step, auto-submit the phone number
+	if step.StepID == LoginStepIDPhoneNumber {
 		phoneNumber := fmt.Sprintf("+%s", old.ID)
 		wl.Log.Debug().
 			Str("phone_number", phoneNumber).
@@ -182,6 +218,14 @@ func (wl *WALogin) StartWithOverride(ctx context.Context, old *bridgev2.UserLogi
 }
 
 func (wl *WALogin) SubmitUserInput(ctx context.Context, input map[string]string) (*bridgev2.LoginStep, error) {
+	// Handle proxy input step
+	if proxy, hasProxy := input["proxy"]; hasProxy {
+		wl.Proxy = proxy
+		wl.Log.Debug().Str("proxy", proxy).Msg("User provided proxy URL")
+		return wl.continueLogin(ctx)
+	}
+
+	// Handle phone number input step
 	ctx, cancel := context.WithTimeout(ctx, LoginConnectWait)
 	defer cancel()
 	err := wl.Client.Connect()
@@ -348,6 +392,7 @@ func (wl *WALogin) Wait(ctx context.Context) (*bridgev2.LoginStep, error) {
 			WADeviceID: wl.LoginSuccess.ID.Device,
 			LoggedInAt: jsontime.UnixNow(),
 			Timezone:   wl.Timezone,
+			Proxy:      wl.Proxy,
 
 			HistorySyncPortalsNeedCreating: true,
 		},
