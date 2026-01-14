@@ -135,7 +135,7 @@ func (wl *WALogin) Start(ctx context.Context) (*bridgev2.LoginStep, error) {
 		Instructions: "Optionally configure a proxy for this WhatsApp connection",
 		UserInputParams: &bridgev2.LoginUserInputParams{
 			Fields: []bridgev2.LoginInputDataField{{
-				Type:        bridgev2.LoginInputFieldTypeText,
+				Type:        bridgev2.LoginInputFieldTypeURL,
 				ID:          "proxy",
 				Name:        "Proxy URL (optional)",
 				Description: "SOCKS5 or HTTP proxy URL (e.g., socks5://127.0.0.1:1080 or http://user:pass@proxy:8080). Leave empty to use global proxy or no proxy.",
